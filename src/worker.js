@@ -1,53 +1,14 @@
-const { exec, spawn } = require('child_process')
+const { spawn } = require('child_process')
 const got = require('got')
-const unzipper = require('unzipper')
 const xml2js = require('xml2js')
 const { randomBytes } = require('crypto')
 const fs = require('fs')
 const { promisify } = require('util')
-const stat = promisify(fs.stat)
-const chmod = promisify(fs.chmod)
 const parseXml = promisify(xml2js.parseString)
-
-const walk = require('./walk')
-const isInstalled = async () => {
-  let installed
-  try {
-    installed = await stat('/tmp/verapdf/verapdf')
-  } catch (err) {
-    installed = false
-  }
-  return installed
-}
-
-async function install () {
-  const installed = await isInstalled()
-  if (!installed) {
-    const zip = unzipper.Extract({ path: '/tmp' })
-    const stream = got.stream(process.env.VERAPDF_ZIP_URL)
-    stream.pipe(zip)
-
-    await new Promise((resolve, reject) => {
-      zip.on('close', resolve)
-    })
-    await chmod('/tmp/verapdf/verapdf', '0700')
-    await chmod('/tmp/verapdf/verapdf-gui', '0700')
-    await chmod('/tmp/verapdf/bin/greenfield-apps-1.12.1.jar', '0700')
-  }
-}
+const walk = require('./util/walk')
+const install = require('./util/install')
 
 async function verify (file) {
-  // try {
-  //  await new Promise((resolve, reject) => {
-  //    exec('mv /var/task/verapdf /tmp/verapdf', (error, stdout, stderr) => {
-  //      if (error) reject(error)
-  //      else resolve()
-  //    })
-  //  })
-  // } catch (err) {
-  //
-  // }
-
   let child = spawn('/tmp/verapdf/verapdf', [file], { shell: true })
   let result = ''
   let resolveExecution
