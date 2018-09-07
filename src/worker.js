@@ -1,89 +1,65 @@
-const { spawn } = require('child_process')
 const got = require('got')
 const xml2js = require('xml2js')
 const { randomBytes } = require('crypto')
-const fs = require('fs')
 const { promisify } = require('util')
 const parseXml = promisify(xml2js.parseString)
 const walk = require('./util/walk')
 const install = require('./util/install')
+const AWS = require('aws-sdk')
+const download = require('./util/download')
+const verify = require('./util/verify')
+const sns = new AWS.SNS({ region: 'us-east-1' })
+const { AWS_LAMBDA_FUNCTION_NAME } = process.env
 
-async function verify (file) {
-  let child = spawn('/tmp/verapdf/verapdf', [file], { shell: true })
-  let result = ''
-  let resolveExecution
-  let rejectExecution
-  let promise = new Promise((resolve, reject) => {
-    resolveExecution = resolve
-    rejectExecution = reject
-  })
-  child.stdout.on('data', data => {
-    let str = data.toString('utf8')
-    console.log('data', str)
-    result += str
-  })
-  child.stderr.on('data', data => {
-    let str = data.toString('utf8')
-    console.log('error', str)
-  })
-  child.on('close', () => resolveExecution(result))
-  child.on('error', rejectExecution)
-
-  return promise
+const handleError = (error, { webhook, topicArn }) => {
+  if (topicArn) {
+    return sns.publish({
+      TopicArn: topicArn,
+      Message: JSON.stringify({ message: error.toString() })
+    }).promise()
+  } else if (webhook) {
+    return got(webhook, {
+      json: true,
+      body: {
+        message: error.toString()
+      }
+    })
+  }
 }
 
-const download = async ({ file, pdfPath }) => {
-  let _resolve
-  let _reject
-  let promise = new Promise((resolve, reject) => {
-    _resolve = resolve
-    _reject = reject
-  })
-  const writable = fs.createWriteStream(pdfPath)
-  const stream = got.stream(file)
-  stream.on('error', _reject)
-  writable.on('close', _resolve)
-  stream.pipe(writable)
-  return promise
-}
-
-const handleError = (webhook, error) => {
-  return got(webhook, {
-    json: true,
-    body: {
-      error: error.toString()
-    }
-  })
-}
-
-const handleMessage = async (record) => {
-  const { file, webhook } = record
+const handleMessage = async ({ topicArn, webhook, ...rest }) => {
+  const { file } = rest
   let id = randomBytes(10).toString('hex')
   let pdfPath = `/tmp/${id}.pdf`
+  let errors = rest.errors || []
   try {
     await download({ file, pdfPath })
   } catch (error) {
-    return handleError(webhook)(error)
+    errors.push({ message: error.toString(), arn: AWS_LAMBDA_FUNCTION_NAME })
   }
-  let out
+  let verificationResultsXml
   try {
-    out = await verify(pdfPath)
+    verificationResultsXml = await verify(pdfPath)
   } catch (error) {
-    return handleError(webhook)(error)
+    errors.push({ message: error.toString(), arn: AWS_LAMBDA_FUNCTION_NAME })
   }
 
   let validationResults
   try {
-    validationResults = await parseXml(out)
+    validationResults = await parseXml(verificationResultsXml)
   } catch (error) {
-    return handleError(webhook, error)
+    errors.push({ message: error.toString(), arn: AWS_LAMBDA_FUNCTION_NAME })
   }
 
-  let jobs = walk(validationResults.report.jobs)
-  return got(webhook, {
-    json: true,
-    body: jobs[0]
-  })
+  let [data] = walk(validationResults.report.jobs)
+  let message = {
+    job: data.job,
+    errors,
+    ...rest
+  }
+  return topicArn
+    ? sns.publish({ Message: JSON.stringify(message), TopicArn: topicArn }).promise()
+    : got(webhook, { json: true, body: message })
 }
 
 module.exports.handler = async (event, context, callback) => {

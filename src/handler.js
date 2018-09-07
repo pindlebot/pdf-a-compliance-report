@@ -3,12 +3,13 @@ const { AWS_REGION = 'us-east-1' } = process.env
 const sns = new AWS.SNS({ region: AWS_REGION })
 
 module.exports.handler = async (event, context, callback) => {
-  const { file, webhook } = JSON.parse(event.body)
-  console.log({ file, webhook })
+  const { file, webhook, topicArn } = JSON.parse(event.body)
+  console.log({ file, webhook, topicArn })
   const params = {
     Message: JSON.stringify({
       file: file,
-      webhook: webhook
+      webhook: webhook || null,
+      topicArn: topicArn || null
     }),
     TopicArn: process.env.SNS_TOPIC_ARN
   }
