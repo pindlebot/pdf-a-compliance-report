@@ -32,6 +32,9 @@ const handleMessage = async ({ topicArn, webhook, ...rest }) => {
   let id = randomBytes(10).toString('hex')
   let pdfPath = `/tmp/${id}.pdf`
   let errors = rest.errors || []
+  let steps = rest.steps || []
+  steps.push(process.env.AWS_LAMBDA_FUNCTION_NAME)
+
   try {
     await download({ file, pdfPath })
   } catch (error) {
@@ -53,9 +56,10 @@ const handleMessage = async ({ topicArn, webhook, ...rest }) => {
 
   let [data] = walk(validationResults.report.jobs)
   let message = {
+    ...rest,
     job: data.job,
     errors,
-    ...rest
+    steps
   }
   return topicArn
     ? sns.publish({ Message: JSON.stringify(message), TopicArn: topicArn }).promise()
